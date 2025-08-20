@@ -5,6 +5,9 @@
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <title>KAKEHASHI | Forestry MVP (Leaflet + GeoTIFF)</title>
 
+<!-- 重要: GitHub Pages のベースURL（相対パスの安定化） -->
+<base href="https://uchu-roku.github.io/kakehashipoc/">
+
 <!-- Leaflet -->
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
@@ -14,7 +17,7 @@
 <script src="https://unpkg.com/georaster@1.6.1/dist/georaster.browser.min.js"></script>
 <script src="https://unpkg.com/georaster-layer-for-leaflet@3.15.0/dist/georaster-layer-for-leaflet.min.js"></script>
 
-<!-- 追加: 再投影対応（UTM等のCRSもブラウザ側でOK） -->
+<!-- 再投影対応（UTM等のCRSもブラウザ側でOK） -->
 <script src="https://unpkg.com/proj4@2.9.2/dist/proj4.js"></script>
 <script src="https://unpkg.com/georaster-proj4@1.7.2/dist/georaster-proj4.browser.min.js"></script>
 
@@ -98,7 +101,7 @@ hr{border:none; border-top:1px solid var(--line); margin:10px 0}
     <div class="card" id="ndviCard">
       <h3>2) NDVI レイヤ</h3>
       <div class="row">
-        <input class="input" id="ndviUrl" placeholder="NDVI GeoTIFF の URL（同一オリジン推奨）" />
+        <input class="input" id="ndviUrl" placeholder="例: data/onuma_ndviRGB_summer.tif" />
         <button class="btn" id="ndviLoadUrl">読込</button>
       </div>
       <div class="row">
@@ -110,12 +113,16 @@ hr{border:none; border-top:1px solid var(--line); margin:10px 0}
       <div class="small">可視域: <span id="ndviRangeLbl">auto</span></div>
       <input type="range" class="slider" id="ndviOpacity" min="0" max="1" step="0.01" value="0.85">
       <div class="legend" id="ndviLegend"></div>
+      <div class="row" style="margin-top:10px">
+        <button class="btn" id="ndviQuick">クイック読込（例）</button>
+        <span class="small">→ <code>data/onuma_ndviRGB_summer.tif</code></span>
+      </div>
     </div>
 
     <div class="card" id="nbrCard">
       <h3>3) NBR レイヤ</h3>
       <div class="row">
-        <input class="input" id="nbrUrl" placeholder="NBR GeoTIFF の URL（同一オリジン推奨）" />
+        <input class="input" id="nbrUrl" placeholder="例: data/onuma_nbr_summer.tif" />
         <button class="btn" id="nbrLoadUrl">読込</button>
       </div>
       <div class="row">
@@ -127,6 +134,10 @@ hr{border:none; border-top:1px solid var(--line); margin:10px 0}
       <div class="small">可視域: <span id="nbrRangeLbl">auto</span></div>
       <input type="range" class="slider" id="nbrOpacity" min="0" max="1" step="0.01" value="0.85">
       <div class="legend" id="nbrLegend"></div>
+      <div class="row" style="margin-top:10px">
+        <button class="btn" id="nbrQuick">クイック読込（例）</button>
+        <span class="small">→ <code>data/onuma_nbr_summer.tif</code></span>
+      </div>
     </div>
 
     <div class="card">
@@ -134,7 +145,7 @@ hr{border:none; border-top:1px solid var(--line); margin:10px 0}
       <div class="small">
         ・GEEの <b>visualize()</b> 出力（8bit 3band RGB）はそのまま表示可。<br>
         ・GEEの <b>生値1バンドTIFF</b> は自動でmin/max推定し擬似カラー化（NDVI/NBR向け）。<br>
-        ・URL読込はCORS制限に注意。<b>同一オリジン（GitHub Pages 等）</b>に置くと確実です。
+        ・URL読込は <b>相対パス（data/...）</b> を推奨（同一オリジンとして扱われます）。
       </div>
     </div>
 
@@ -168,14 +179,34 @@ function logMsg(msg, isErr=false){
   console[isErr?'error':'log'](msg);
 }
 
+// ====== fetch の安定化（相対/絶対URL両対応、オリジン自動判定） ======
+async function fetchArrayBufferSmart(urlOrFile){
+  if (urlOrFile instanceof File) {
+    return await urlOrFile.arrayBuffer();
+  }
+  const url = urlOrFile.toString().trim();
+  let reqUrl = url;
+  try {
+    const u = new URL(url, window.location.href); // 相対→絶対化
+    reqUrl = u.href;
+    const sameOrigin = (u.origin === window.location.origin);
+    const res = await fetch(reqUrl, {
+      mode: sameOrigin ? 'same-origin' : 'cors',
+      cache: 'no-store',
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status} (${res.statusText}) for ${reqUrl}`);
+    return await res.arrayBuffer();
+  } catch (e) {
+    throw new Error(`Fetch failed for ${reqUrl}: ${e.message}`);
+  }
+}
+
 // ====== GeoTIFF 読み込み → georaster-layer-for-leaflet ======
 async function addGeoTiffLayer({source, target='ndvi', paletteKey='ndvi'}){
   try{
-    const arrayBuffer = source instanceof File
-      ? await source.arrayBuffer()
-      : await (await fetch(source, {mode:'cors'})).arrayBuffer();
+    const arrayBuffer = await fetchArrayBufferSmart(source);
 
-    // georaster-proj4 が window.parseGeoraster をラップしており、CRSを認識して再投影可能
+    // proj4対応の parseGeoraster が利用される（CRS自動解釈＆再投影可）
     const georaster = await parseGeoraster(arrayBuffer);
 
     logMsg(`[${target}] size=${georaster.width}x${georaster.height} bands=${georaster.numberOfRasters} type=${georaster.dataType} noData=${georaster.noDataValue} crs=${georaster.projection||'unknown'}`);
@@ -184,22 +215,15 @@ async function addGeoTiffLayer({source, target='ndvi', paletteKey='ndvi'}){
     let options = { opacity: 0.85, resolution: 256, resampleMethod:'bilinear' };
 
     if(isRGB){
-      // 8bit 3band RGB はそのまま描画
-      renderLegend(target==='ndvi' ? 'ndviLegend' : 'nbrLegend', []); // RGBの場合は凡例なし
+      renderLegend(target==='ndvi' ? 'ndviLegend' : 'nbrLegend', []);
       document.getElementById(target==='ndvi' ? 'ndviRangeLbl' : 'nbrRangeLbl').textContent = 'RGB(8bit)';
     } else {
-      // 1バンド（生値） → min/max を推定しパレットでカラー化
       const band = 0;
       const { mins, maxs } = georaster;
       let vmin = mins?.[band], vmax = maxs?.[band];
-
       const defaultDomain = (paletteKey==='ndvi') ? [-0.2, 0.9] : [-0.5, 1.0];
-      if(!isFinite(vmin) || !isFinite(vmax) || vmin===vmax){
-        vmin = defaultDomain[0]; vmax = defaultDomain[1];
-      }else{
-        const span = vmax - vmin;
-        if(span<=1e-6){ vmin = defaultDomain[0]; vmax = defaultDomain[1]; }
-      }
+      if(!isFinite(vmin) || !isFinite(vmax) || vmin===vmax){ vmin = defaultDomain[0]; vmax = defaultDomain[1]; }
+      else if((vmax - vmin) <= 1e-6){ vmin = defaultDomain[0]; vmax = defaultDomain[1]; }
 
       const lut = makeColorScale(PALETTES[paletteKey], 256);
       const toIdx = (v)=>{ const t=Math.max(0,Math.min(1,(v-vmin)/(vmax-vmin))); return Math.min(255,Math.max(0,Math.round(t*255))); };
@@ -225,7 +249,7 @@ async function addGeoTiffLayer({source, target='ndvi', paletteKey='ndvi'}){
 
   }catch(err){
     logMsg(`[${target}] 読み込みエラー: ${err?.message||err}`, true);
-    alert(`TIFF読込に失敗しました。\n${err?.message||err}\n\n対処: 1) 同一オリジンURL or ドラッグ&ドロップ 2) GEE出力を crs=EPSG:4326 に 3) ファイルサイズを縮小`);
+    alert(`TIFF読込に失敗しました。\n${err?.message||err}\n\n対処: 1) 相対パス (data/...) で 2) 同一リポの GitHub Pages から開く 3) GEE出力のCRS/サイズを確認`);
   }
 }
 
@@ -275,6 +299,19 @@ function renderLegend(elemId, colors){
     el.appendChild(sw);
   });
 }
+
+// ====== クイックボタン（例） ======
+document.getElementById('ndviQuick').onclick = ()=> {
+  const path = 'data/onuma_ndviRGB_summer.tif'; // 例：存在するファイル名に合わせてください
+  document.getElementById('ndviUrl').value = path;
+  addGeoTiffLayer({source:path, target:'ndvi', paletteKey:'ndvi'});
+};
+document.getElementById('nbrQuick').onclick = ()=> {
+  const path = 'data/onuma_nbr_summer.tif'; // 例：存在するファイル名に合わせてください
+  document.getElementById('nbrUrl').value = path;
+  addGeoTiffLayer({source:path, target:'nbr', paletteKey:'nbr'});
+};
 </script>
 </body>
 </html>
+
