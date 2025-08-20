@@ -2,316 +2,40 @@
 <html lang="ja">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>KAKEHASHI | Forestry MVP (Leaflet + GeoTIFF)</title>
-
-<!-- 重要: GitHub Pages のベースURL（相対パスの安定化） -->
-<base href="https://uchu-roku.github.io/kakehashipoc/">
-
-<!-- Leaflet -->
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
-
-<!-- GeoTIFF stack -->
-<script src="https://unpkg.com/geotiff@2.1.3/dist-browser/geotiff.min.js"></script>
-<script src="https://unpkg.com/georaster@1.6.1/dist/georaster.browser.min.js"></script>
-<script src="https://unpkg.com/georaster-layer-for-leaflet@3.15.0/dist/georaster-layer-for-leaflet.min.js"></script>
-
-<!-- 再投影対応（UTM等のCRSもブラウザ側でOK） -->
-<script src="https://unpkg.com/proj4@2.9.2/dist/proj4.js"></script>
-<script src="https://unpkg.com/georaster-proj4@1.7.2/dist/georaster-proj4.browser.min.js"></script>
-
-<script>
-/* ===== パレット & 補助関数 ===== */
-const PALETTES = {
-  ndvi: ['#f7f7f7','#d9ef8b','#a6d96a','#66bd63','#1a9850','#006837'],
-  nbr:  ['#7f0000','#d7301f','#ef6548','#fdbb84','#fee8c8','#f7f7f7']
-};
-function makeColorScale(palette, steps=256){
-  const n = palette.length;
-  const hex2rgb = h=>[parseInt(h.slice(1,3),16),parseInt(h.slice(3,5),16),parseInt(h.slice(5,7),16)];
-  const rgb2hex = (r,g,b)=>'#'+[r,g,b].map(v=>v.toString(16).padStart(2,'0')).join('');
-  const cols = [];
-  for(let i=0;i<steps;i++){
-    const t = i/(steps-1), p = t*(n-1);
-    const i0 = Math.floor(p), i1 = Math.min(n-1, i0+1), lt = p - i0;
-    const [r0,g0,b0] = hex2rgb(palette[i0]);
-    const [r1,g1,b1] = hex2rgb(palette[i1]);
-    const r = Math.round(r0+(r1-r0)*lt);
-    const g = Math.round(g0+(g1-g0)*lt);
-    const b = Math.round(b0+(b1-b0)*lt);
-    cols.push(rgb2hex(r,g,b));
-  }
-  return cols;
-}
-</script>
-
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>KAKEHASHI NDVI ビューア</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/georaster"></script>
+<script src="https://unpkg.com/georaster-layer-for-leaflet"></script>
 <style>
-:root{
-  --bg:#0b1020; --panel:#111827; --text:#e5e7eb; --muted:#9ca3af;
-  --accent:#22d3ee; --accent2:#a78bfa; --chip:#0b1326; --chipb:#2a3953;
-  --ok:#16a34a; --warn:#f59e0b; --line:#243045;
-}
-*{box-sizing:border-box}
-html,body{height:100%; margin:0; background:var(--bg); color:var(--text); font-family:Inter,system-ui,ui-sans-serif,Segoe UI,Roboto}
-.app{display:grid; grid-template-columns: 340px 1fr; grid-template-rows: auto 1fr; grid-template-areas:
-  "header header" "sidebar map"; height:100%}
-.header{grid-area:header; padding:10px 14px; border-bottom:1px solid var(--line); display:flex; gap:12px; align-items:center}
-.header h1{font-size:16px; margin:0; font-weight:700}
-.header .sub{color:var(--muted); font-size:12px}
-.sidebar{grid-area:sidebar; border-right:1px solid var(--line); padding:12px; overflow:auto; background:#0f162c}
-.map{grid-area:map}
-#map{height:100%; width:100%}
-
-/* cards */
-.card{background:linear-gradient(180deg,#0f1934,#0c1530); border:1px solid #1f2a44; border-radius:14px; padding:12px; box-shadow:0 10px 30px rgba(0,0,0,.25); margin-bottom:12px}
-.card h3{margin:0 0 8px; font-size:13px}
-.row{display:flex; gap:8px; align-items:center; margin-top:8px}
-.input{flex:1; background:#0b1326; border:1px solid #223153; color:var(--text); padding:8px 10px; border-radius:10px}
-.btn{background:linear-gradient(180deg,#1c2750,#141d3a); border:1px solid #293a64; color:#e6f6ff; padding:8px 10px; border-radius:10px; cursor:pointer}
-.btn:hover{filter:brightness(1.1)}
-.small{font-size:12px; color:var(--muted)}
-.badge{font-size:11px; background:#132042; color:#c8eefd; border:1px solid #274071; padding:2px 6px; border-radius:999px}
-.drop{border:1px dashed #2a3d6d; border-radius:12px; padding:10px; text-align:center; color:var(--muted); background:#0b1326}
-.slider{width:100%}
-.legend{display:flex; gap:6px; align-items:center; margin-top:8px; flex-wrap:wrap}
-.legend .sw{width:16px; height:12px; border-radius:3px; border:1px solid rgba(255,255,255,.2)}
-hr{border:none; border-top:1px solid var(--line); margin:10px 0}
-.logline{white-space:pre-wrap}
-.err{color:#ffb4b4}
+  #map { width: 100%; height: 100vh; }
 </style>
 </head>
 <body>
-<div class="app">
-  <div class="header">
-    <h1>KAKEHASHI Forestry MVP</h1>
-    <div class="sub">Leaflet + GeoTIFF（NDVI/NBR / RGB or 1-band）</div>
-    <span class="badge">Stage 0</span>
-  </div>
-
-  <aside class="sidebar">
-    <div class="card">
-      <h3>1) ベースマップ</h3>
-      <div class="row">
-        <button class="btn" id="fitOnuma">大沼にフォーカス</button>
-      </div>
-      <div class="row small">OSM/淡色/地形タイルは必要に応じて追加可能</div>
-    </div>
-
-    <div class="card" id="ndviCard">
-      <h3>2) NDVI レイヤ</h3>
-      <div class="row">
-        <input class="input" id="ndviUrl" placeholder="例: data/onuma_ndviRGB_summer.tif" />
-        <button class="btn" id="ndviLoadUrl">読込</button>
-      </div>
-      <div class="row">
-        <input type="file" id="ndviFile" accept=".tif,.tiff" style="display:none" />
-        <button class="btn" id="ndviPick">ローカルTIFF</button>
-      </div>
-      <div class="drop small" id="ndviDrop">ここにNDVIのTIFFをドラッグ＆ドロップ</div>
-      <hr>
-      <div class="small">可視域: <span id="ndviRangeLbl">auto</span></div>
-      <input type="range" class="slider" id="ndviOpacity" min="0" max="1" step="0.01" value="0.85">
-      <div class="legend" id="ndviLegend"></div>
-      <div class="row" style="margin-top:10px">
-        <button class="btn" id="ndviQuick">クイック読込（例）</button>
-        <span class="small">→ <code>data/onuma_ndviRGB_summer.tif</code></span>
-      </div>
-    </div>
-
-    <div class="card" id="nbrCard">
-      <h3>3) NBR レイヤ</h3>
-      <div class="row">
-        <input class="input" id="nbrUrl" placeholder="例: data/onuma_nbr_summer.tif" />
-        <button class="btn" id="nbrLoadUrl">読込</button>
-      </div>
-      <div class="row">
-        <input type="file" id="nbrFile" accept=".tif,.tiff" style="display:none" />
-        <button class="btn" id="nbrPick">ローカルTIFF</button>
-      </div>
-      <div class="drop small" id="nbrDrop">ここにNBRのTIFFをドラッグ＆ドロップ</div>
-      <hr>
-      <div class="small">可視域: <span id="nbrRangeLbl">auto</span></div>
-      <input type="range" class="slider" id="nbrOpacity" min="0" max="1" step="0.01" value="0.85">
-      <div class="legend" id="nbrLegend"></div>
-      <div class="row" style="margin-top:10px">
-        <button class="btn" id="nbrQuick">クイック読込（例）</button>
-        <span class="small">→ <code>data/onuma_nbr_summer.tif</code></span>
-      </div>
-    </div>
-
-    <div class="card">
-      <h3>Tips</h3>
-      <div class="small">
-        ・GEEの <b>visualize()</b> 出力（8bit 3band RGB）はそのまま表示可。<br>
-        ・GEEの <b>生値1バンドTIFF</b> は自動でmin/max推定し擬似カラー化（NDVI/NBR向け）。<br>
-        ・URL読込は <b>相対パス（data/...）</b> を推奨（同一オリジンとして扱われます）。
-      </div>
-    </div>
-
-    <div class="card">
-      <h3>ログ</h3>
-      <div id="log" class="small"></div>
-    </div>
-  </aside>
-
-  <main class="map"><div id="map"></div></main>
-</div>
-
+<div id="map"></div>
 <script>
-// ====== Leaflet 基本 ======
-const map = L.map('map', { zoomControl:true, attributionControl:true }).setView([41.98, 140.70], 11);
-const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
-  maxZoom:19, attribution:'© OpenStreetMap'
-}).addTo(map);
-document.getElementById('fitOnuma').onclick = () => map.setView([41.98, 140.70], 11);
+  // Leaflet マップ初期化
+  const map = L.map("map").setView([42.0, 141.0], 10);
 
-// レイヤ参照
-let ndviLayer = null, nbrLayer = null;
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    attribution: "&copy; OpenStreetMap contributors"
+  }).addTo(map);
 
-// ====== ログ出力 ======
-function logMsg(msg, isErr=false){
-  const el = document.getElementById('log'); if(!el) return;
-  const p = document.createElement('div');
-  p.className = 'logline' + (isErr ? ' err' : '');
-  p.textContent = (isErr ? 'ERROR: ' : '') + msg;
-  el.appendChild(p);
-  console[isErr?'error':'log'](msg);
-}
-
-// ====== fetch の安定化（相対/絶対URL両対応、オリジン自動判定） ======
-async function fetchArrayBufferSmart(urlOrFile){
-  if (urlOrFile instanceof File) {
-    return await urlOrFile.arrayBuffer();
-  }
-  const url = urlOrFile.toString().trim();
-  let reqUrl = url;
-  try {
-    const u = new URL(url, window.location.href); // 相対→絶対化
-    reqUrl = u.href;
-    const sameOrigin = (u.origin === window.location.origin);
-    const res = await fetch(reqUrl, {
-      mode: sameOrigin ? 'same-origin' : 'cors',
-      cache: 'no-store',
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status} (${res.statusText}) for ${reqUrl}`);
-    return await res.arrayBuffer();
-  } catch (e) {
-    throw new Error(`Fetch failed for ${reqUrl}: ${e.message}`);
-  }
-}
-
-// ====== GeoTIFF 読み込み → georaster-layer-for-leaflet ======
-async function addGeoTiffLayer({source, target='ndvi', paletteKey='ndvi'}){
-  try{
-    const arrayBuffer = await fetchArrayBufferSmart(source);
-
-    // proj4対応の parseGeoraster が利用される（CRS自動解釈＆再投影可）
-    const georaster = await parseGeoraster(arrayBuffer);
-
-    logMsg(`[${target}] size=${georaster.width}x${georaster.height} bands=${georaster.numberOfRasters} type=${georaster.dataType} noData=${georaster.noDataValue} crs=${georaster.projection||'unknown'}`);
-
-    const isRGB = georaster.numberOfRasters >= 3 && georaster.dataType.includes('8');
-    let options = { opacity: 0.85, resolution: 256, resampleMethod:'bilinear' };
-
-    if(isRGB){
-      renderLegend(target==='ndvi' ? 'ndviLegend' : 'nbrLegend', []);
-      document.getElementById(target==='ndvi' ? 'ndviRangeLbl' : 'nbrRangeLbl').textContent = 'RGB(8bit)';
-    } else {
-      const band = 0;
-      const { mins, maxs } = georaster;
-      let vmin = mins?.[band], vmax = maxs?.[band];
-      const defaultDomain = (paletteKey==='ndvi') ? [-0.2, 0.9] : [-0.5, 1.0];
-      if(!isFinite(vmin) || !isFinite(vmax) || vmin===vmax){ vmin = defaultDomain[0]; vmax = defaultDomain[1]; }
-      else if((vmax - vmin) <= 1e-6){ vmin = defaultDomain[0]; vmax = defaultDomain[1]; }
-
-      const lut = makeColorScale(PALETTES[paletteKey], 256);
-      const toIdx = (v)=>{ const t=Math.max(0,Math.min(1,(v-vmin)/(vmax-vmin))); return Math.min(255,Math.max(0,Math.round(t*255))); };
-      options.pixelValuesToColorFn = (vals)=>{ const v=vals[band]; if(v==null||Number.isNaN(v)) return null; return lut[toIdx(v)]; };
-
-      document.getElementById(target==='ndvi' ? 'ndviRangeLbl' : 'nbrRangeLbl').textContent = `${vmin.toFixed(2)} … ${vmax.toFixed(2)}`;
-      renderLegend(target==='ndvi' ? 'ndviLegend' : 'nbrLegend', PALETTES[paletteKey]);
-    }
-
-    const layer = new GeoRasterLayer({ georaster, ...options }).addTo(map);
-
-    if(target==='ndvi'){
-      if(ndviLayer) map.removeLayer(ndviLayer);
-      ndviLayer = layer;
-      layer.setOpacity(parseFloat(document.getElementById('ndviOpacity').value));
-    }else{
-      if(nbrLayer) map.removeLayer(nbrLayer);
-      nbrLayer = layer;
-      layer.setOpacity(parseFloat(document.getElementById('nbrOpacity').value));
-    }
-
-    try{ map.fitBounds(layer.getBounds(), {padding:[10,10]}); }catch(e){}
-
-  }catch(err){
-    logMsg(`[${target}] 読み込みエラー: ${err?.message||err}`, true);
-    alert(`TIFF読込に失敗しました。\n${err?.message||err}\n\n対処: 1) 相対パス (data/...) で 2) 同一リポの GitHub Pages から開く 3) GEE出力のCRS/サイズを確認`);
-  }
-}
-
-// ====== UI結線（NDVI/NBR） ======
-function bindInputs(prefix, paletteKey){
-  const pickBtn = document.getElementById(prefix+'Pick');
-  const fileInp = document.getElementById(prefix+'File');
-  const urlInp  = document.getElementById(prefix+'Url');
-  const loadBtn = document.getElementById(prefix+'LoadUrl');
-  const drop    = document.getElementById(prefix+'Drop');
-  const opac    = document.getElementById(prefix+'Opacity');
-
-  pickBtn.onclick = ()=> fileInp.click();
-  fileInp.onchange = (e)=>{
-    const f = e.target.files?.[0];
-    if(f) addGeoTiffLayer({source:f, target: prefix==='ndvi'?'ndvi':'nbr', paletteKey});
-  };
-  loadBtn.onclick = ()=>{
-    const url = urlInp.value.trim();
-    if(url) addGeoTiffLayer({source:url, target: prefix==='ndvi'?'ndvi':'nbr', paletteKey});
-  };
-  drop.ondragover = (e)=>{ e.preventDefault(); drop.style.background='#0e1a36'; };
-  drop.ondragleave= ()=> drop.style.background='';
-  drop.ondrop = (e)=>{
-    e.preventDefault(); drop.style.background='';
-    const f = e.dataTransfer.files?.[0];
-    if(f) addGeoTiffLayer({source:f, target: prefix==='ndvi'?'ndvi':'nbr', paletteKey});
-  };
-  opac.oninput = ()=>{
-    const v = parseFloat(opac.value);
-    const layer = prefix==='ndvi'? ndviLayer : nbrLayer;
-    if(layer) layer.setOpacity(v);
-  };
-}
-bindInputs('ndvi','ndvi');
-bindInputs('nbr','nbr');
-
-// ====== 凡例描画 ======
-function renderLegend(elemId, colors){
-  const el = document.getElementById(elemId);
-  el.innerHTML = '';
-  if(!colors || colors.length===0){ return; }
-  colors.forEach(c=>{
-    const sw = document.createElement('div');
-    sw.className = 'sw';
-    sw.style.background = c;
-    el.appendChild(sw);
-  });
-}
-
-// ====== クイックボタン（例） ======
-document.getElementById('ndviQuick').onclick = ()=> {
-  const path = 'data/onuma_ndviRGB_summer.tif'; // 例：存在するファイル名に合わせてください
-  document.getElementById('ndviUrl').value = path;
-  addGeoTiffLayer({source:path, target:'ndvi', paletteKey:'ndvi'});
-};
-document.getElementById('nbrQuick').onclick = ()=> {
-  const path = 'data/onuma_nbr_summer.tif'; // 例：存在するファイル名に合わせてください
-  document.getElementById('nbrUrl').value = path;
-  addGeoTiffLayer({source:path, target:'nbr', paletteKey:'nbr'});
-};
+  // GeoTIFF 読み込み
+  fetch("data/onuma_ndvi_2024_summer.tif")
+    .then(res => res.arrayBuffer())
+    .then(data => parseGeoraster(data))
+    .then(georaster => {
+      const layer = new GeoRasterLayer({
+        georaster: georaster,
+        opacity: 0.7,
+        resolution: 256
+      });
+      layer.addTo(map);
+      map.fitBounds(layer.getBounds());
+    })
+    .catch(err => console.error("GeoTIFF 読み込みエラー:", err));
 </script>
 </body>
 </html>
-
