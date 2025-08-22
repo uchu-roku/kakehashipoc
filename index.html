@@ -9,16 +9,11 @@
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
-<!-- GeoTIFF / GeoRaster stack（順番必須） -->
+<!-- GeoTIFF / GeoRaster stack（順番が重要） -->
 <script src="https://unpkg.com/proj4@2.9.2/dist/proj4.js"></script>
 <script src="https://unpkg.com/geotiff@2.0.7/dist-browser/geotiff.min.js"></script>
-<script src="https://unpkg.com/georaster@1.6.1/dist/georaster.browser.min.js"></script>
+<script src="https://unpkg.com/georaster@1.6.1/dist/georaster.min.js"></script>
 <script src="https://unpkg.com/georaster-layer-for-leaflet@3.21.0/dist/georaster-layer-for-leaflet.min.js"></script>
-
-<!-- 必要ならUTMのEPSGを定義（例：北海道=54N）-->
-<script>
-proj4.defs('EPSG:32654', '+proj=utm +zone=54 +datum=WGS84 +units=m +no_defs');
-</script>
 
 <style>
 html, body { height:100%; margin:0; font-family: sans-serif; }
@@ -73,6 +68,7 @@ async function loadTiff(url){
     if(!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
     const buf = await res.arrayBuffer();
 
+    // georaster.js で定義済みの関数
     const georaster = await parseGeoraster(buf);
     console.log('[georaster]', georaster);
 
