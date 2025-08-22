@@ -15,8 +15,8 @@
   <script src="https://unpkg.com/georaster"></script>
   <script src="https://unpkg.com/georaster-layer-for-leaflet"></script>
 
-  <!-- d3-scale for gradient color mapping -->
-  <script src="https://d3js.org/d3-scale.v3.min.js"></script>
+  <!-- ✅ d3本体（含むscale, interpolate, すべて） -->
+  <script src="https://d3js.org/d3.v7.min.js"></script>
 
   <style>
     html, body, #map { height:100%; margin:0; }
@@ -50,7 +50,7 @@
     // グラデーションスケール（0～40mを想定）
     const colorScale = d3.scaleSequential()
       .domain([0, 40])
-      .interpolator(d3.interpolateYlGnBu);
+      .interpolator(d3.interpolateYlGnBu);  // ✅ interpolate関数を利用
 
     let rasterLayer;
 
@@ -65,7 +65,7 @@
             const v = values[0];
             if (v === 0 || v === null) return null;
             const m = (v / 255) * 40; // 0–40m に正規化
-            return colorScale(m);
+            return colorScale(m);    // ✅ ここがエラー原因 → 修正済み
           }
         });
         rasterLayer.addTo(map);
