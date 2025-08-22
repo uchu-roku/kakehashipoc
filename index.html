@@ -9,13 +9,13 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
-  <!-- GeoTIFF stack（動作実績のある並び） -->
+  <!-- GeoTIFF stack（現行で成功した並び） -->
   <script src="https://unpkg.com/geotiff"></script>
   <script src="https://unpkg.com/proj4"></script>
   <script src="https://unpkg.com/georaster"></script>
   <script src="https://unpkg.com/georaster-layer-for-leaflet"></script>
 
-  <!-- d3（将来の連続カラーマップ用、今回のカテゴリ凡例には未使用でもOK） -->
+  <!-- d3（凡例や将来拡張用。今回のカテゴリ凡例自体はプレーンJSで生成） -->
   <script src="https://d3js.org/d3.v7.min.js"></script>
 
   <style>
@@ -35,46 +35,50 @@
   <div id="map"></div>
 
   <script>
-    // ---------- 基本セットアップ（既存の成功形を維持） ----------
+    // ====== 基本セットアップ（既存の成功形を維持） ======
     const map = L.map('map').setView([41.97, 140.67], 11);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       attribution: "© OpenStreetMap"
     }).addTo(map);
 
-    // ---------- レイヤ一覧：ここにtifを足すだけで切り替え可能 ----------
+    // ====== レイヤ一覧（最低2件以上あると切替が確認しやすい） ======
     const LAYERS = {
       "樹高 2024-08": "data/onuma_canopy_height_8bit.tif",
-      // "樹高 2024-07": "data/onuma_canopy_height_8bit_202407.tif",
+      "樹高 2024-07（テスト）": "data/onuma_canopy_height_8bit.tif" // 別tifを用意したら差し替え
     };
 
-    // ---------- 表示スタイル（カテゴリ凡例：0–10/10–20/20–30/30–40m） ----------
+    // ====== 表示スタイル（カテゴリ凡例：0–10/10–20/20–30/30–40m） ======
     const breaks = [0, 10, 20, 30, 40];
     const colors = ["#ffffcc", "#a1dab4", "#41b6c4", "#225ea8"];
 
-    let rasterLayer = null;                   // 現在のレイヤ
-    const ui = { select:null, slider:null, toggle:null }; // UI参照
+    let rasterLayer = null;
+    const ui = { select:null, slider:null, toggle:null };
 
-    // ---------- 読み込み関数（既存の fetch→parseGeoraster を踏襲） ----------
+    // ====== TIFF読込（既存の fetch→parseGeoraster→GeoRasterLayer を踏襲） ======
     async function loadRaster(url) {
       try {
-        // UIを一旦無効化（ロード中操作で壊さないため）
         setUIEnabled(false);
 
-        const res = await fetch(url, { cache: 'no-store' });
+        // キャッシュ無効化（同URL切替でも必ず再描画）
+        const bust = (url.includes('?') ? '&' : '?') + 'v=' + Date.now();
+        console.log('[loadRaster]', url + bust);
+        const res = await fetch(url + bust, { cache: 'no-store' });
         const buf = await res.arrayBuffer();
-        const georaster = await parseGeoraster(buf); // ← 既存どおり
+        const georaster = await parseGeoraster(buf);
 
+        // 既存レイヤを外す
         if (rasterLayer && map.hasLayer(rasterLayer)) map.removeLayer(rasterLayer);
 
-        const previousOpacity = (rasterLayer && rasterLayer.options.opacity) || 0.7;
+        // 直前の不透明度を引き継ぎ（初回は0.7）
+        const prevOpacity = (rasterLayer && rasterLayer.options.opacity) || 0.7;
 
         rasterLayer = new GeoRasterLayer({
           georaster,
-          opacity: previousOpacity,
+          opacity: prevOpacity,
           pixelValuesToColorFn: values => {
             const v = values[0];
-            if (v === 0 || v === null) return null;     // 0/nullは透過
-            const m = (v / 255) * 40;                   // 8bit → 樹高[0–40m]
+            if (v === 0 || v === null) return null; // 0/nullは透過
+            const m = (v / 255) * 40;               // 8bit → 樹高[0–40m]
             for (let i=0; i<breaks.length-1; i++) {
               if (m >= breaks[i] && m < breaks[i+1]) return colors[i];
             }
@@ -84,18 +88,16 @@
 
         rasterLayer.addTo(map);
         map.fitBounds(rasterLayer.getBounds(), { padding:[10,10] });
-
       } catch (e) {
         console.error("読み込みエラー:", e);
         alert("TIFFの読み込みに失敗しました: " + (e.message || e));
       } finally {
-        // ロード完了後にUIを現在状態へ同期
         syncUI();
         setUIEnabled(true);
       }
     }
 
-    // ---------- 凡例（カテゴリ凡例そのまま） ----------
+    // ====== 凡例（カテゴリ凡例：今の配色をそのまま表示） ======
     function addLegend() {
       const legend = L.control({position: "bottomright"});
       legend.onAdd = function () {
@@ -108,12 +110,11 @@
       legend.addTo(map);
     }
 
-    // ---------- UI（レイヤ選択／透過度／表示切替） ----------
+    // ====== UI（レイヤ選択＋透過度＋表示切替） ======
     function addControls() {
       const control = L.control({position: "topright"});
       control.onAdd = function() {
         const div = L.DomUtil.create("div", "leaflet-control custom");
-        // マップへのイベント伝播を止めて、UI操作中の地図移動を防止（既存パターン）
         L.DomEvent.disableClickPropagation(div);
 
         // レイヤ選択
@@ -124,10 +125,16 @@
           opt.textContent = label;
           ui.select.appendChild(opt);
         }
-        ui.select.onchange = e => loadRaster(e.target.value);
+        const handleSelect = e => {
+          const nextUrl = e.target.value;
+          console.log('[select]', nextUrl);
+          loadRaster(nextUrl);
+        };
+        ui.select.addEventListener('input', handleSelect);
+        ui.select.addEventListener('change', handleSelect);
         div.appendChild(ui.select);
 
-        // 透過度スライダー
+        // 透過度
         ui.slider = document.createElement("input");
         ui.slider.type = "range"; ui.slider.min = 0; ui.slider.max = 1; ui.slider.step = 0.1; ui.slider.value = 0.7;
         ui.slider.oninput = e => { if (rasterLayer) rasterLayer.setOpacity(parseFloat(e.target.value)); };
@@ -138,11 +145,8 @@
         ui.toggle.textContent = "非表示";
         ui.toggle.onclick = () => {
           if (!rasterLayer) return;
-          if (map.hasLayer(rasterLayer)) {
-            map.removeLayer(rasterLayer);
-          } else {
-            rasterLayer.addTo(map);
-          }
+          if (map.hasLayer(rasterLayer)) map.removeLayer(rasterLayer);
+          else rasterLayer.addTo(map);
           syncUI();
         };
         div.appendChild(ui.toggle);
@@ -152,14 +156,13 @@
       control.addTo(map);
     }
 
-    // ---------- UI同期＆活性/非活性の制御 ----------
+    // ====== UI同期＆活性/非活性 ======
     function syncUI() {
-      if (!ui.slider || !ui.toggle) return;
-      // スライダー値は現在の不透明度を反映
-      ui.slider.value = rasterLayer ? rasterLayer.options.opacity : 0.7;
-      // ボタン表示は現在の可視状態に合わせる
-      const visible = rasterLayer && map.hasLayer(rasterLayer);
-      ui.toggle.textContent = visible ? "非表示" : "表示";
+      if (ui.slider) ui.slider.value = rasterLayer ? rasterLayer.options.opacity : 0.7;
+      if (ui.toggle) {
+        const visible = rasterLayer && map.hasLayer(rasterLayer);
+        ui.toggle.textContent = visible ? "非表示" : "表示";
+      }
     }
     function setUIEnabled(enabled) {
       if (ui.select) ui.select.disabled = !enabled;
@@ -167,11 +170,10 @@
       if (ui.toggle) ui.toggle.disabled = !enabled;
     }
 
-    // ---------- 起動（凡例/コントロール追加 → 既定レイヤ読込） ----------
+    // ====== 起動（UI/凡例追加 → 既定レイヤ読込） ======
     addLegend();
     addControls();
-    // 既定選択を合わせてからロード
-    if (ui.select) ui.select.value = LAYERS["樹高 2024-08"];
+    if (ui.select) ui.select.value = LAYERS["樹高 2024-08"];  // 既定をUIに反映
     setUIEnabled(false);
     loadRaster(LAYERS["樹高 2024-08"]);
   </script>
