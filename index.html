@@ -9,13 +9,13 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
-  <!-- GeoTIFF stack（現行で成功した並び） -->
+  <!-- GeoTIFF stack（動作実績のある並び） -->
   <script src="https://unpkg.com/geotiff"></script>
   <script src="https://unpkg.com/proj4"></script>
   <script src="https://unpkg.com/georaster"></script>
   <script src="https://unpkg.com/georaster-layer-for-leaflet"></script>
 
-  <!-- d3（凡例や将来拡張用。今回のカテゴリ凡例自体はプレーンJSで生成） -->
+  <!-- d3（将来拡張用。凡例はプレーンJSで生成） -->
   <script src="https://d3js.org/d3.v7.min.js"></script>
 
   <style>
@@ -37,39 +37,59 @@
   <script>
     // ====== 基本セットアップ（既存の成功形を維持） ======
     const map = L.map('map').setView([41.97, 140.67], 11);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: "© OpenStreetMap"
-    }).addTo(map);
 
-    // ====== レイヤ一覧（最低2件以上あると切替が確認しやすい） ======
+    // ▼ベースマップ定義：OSM（既定）＋ 航空写真（Esri/GSI）
+    const baseOSM = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '© OpenStreetMap'
+    }).addTo(map); // 初期はOSM
+
+    const baseEsri = L.tileLayer(
+      'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+      { attribution: 'Tiles © Esri — Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community' }
+    );
+
+    const baseGSI = L.tileLayer(
+      'https://cyberjapandata.gsi.go.jp/xyz/seamlessphoto/{z}/{x}/{y}.jpg',
+      { attribution: '© 国土地理院' }
+    );
+
+    // レイヤコントロール（ベース切替）
+    const baseLayers = {
+      '地図（OSM）': baseOSM,
+      '航空写真（Esri）': baseEsri,
+      '航空写真（GSI）': baseGSI
+    };
+    const overlays = {};
+    const layerControl = L.control.layers(baseLayers, overlays, { collapsed: false }).addTo(map);
+
+    // ====== レイヤ一覧（TIFF切替用） ======
     const LAYERS = {
       "樹高 2024-08": "data/onuma_canopy_height_8bit.tif",
-      "樹高 2024-07（テスト）": "data/onuma_canopy_height_8bit.tif" // 別tifを用意したら差し替え
+      "樹高 2024-07（テスト）": "data/onuma_canopy_height_8bit.tif" // 別tifが用意できたら差し替え
     };
 
     // ====== 表示スタイル（カテゴリ凡例：0–10/10–20/20–30/30–40m） ======
     const breaks = [0, 10, 20, 30, 40];
     const colors = ["#ffffcc", "#a1dab4", "#41b6c4", "#225ea8"];
 
-    let rasterLayer = null;
+    let rasterLayer = null;         // 現在のGeoRasterLayer
+    let overlayRef = null;          // Layersコントロール用の参照
     const ui = { select:null, slider:null, toggle:null };
 
-    // ====== TIFF読込（既存の fetch→parseGeoraster→GeoRasterLayer を踏襲） ======
+    // ====== TIFF読込（既存の流れを踏襲） ======
     async function loadRaster(url) {
       try {
         setUIEnabled(false);
 
-        // キャッシュ無効化（同URL切替でも必ず再描画）
+        // キャッシュバスターで確実に再読込
         const bust = (url.includes('?') ? '&' : '?') + 'v=' + Date.now();
         console.log('[loadRaster]', url + bust);
         const res = await fetch(url + bust, { cache: 'no-store' });
         const buf = await res.arrayBuffer();
         const georaster = await parseGeoraster(buf);
 
-        // 既存レイヤを外す
         if (rasterLayer && map.hasLayer(rasterLayer)) map.removeLayer(rasterLayer);
 
-        // 直前の不透明度を引き継ぎ（初回は0.7）
         const prevOpacity = (rasterLayer && rasterLayer.options.opacity) || 0.7;
 
         rasterLayer = new GeoRasterLayer({
@@ -77,8 +97,8 @@
           opacity: prevOpacity,
           pixelValuesToColorFn: values => {
             const v = values[0];
-            if (v === 0 || v === null) return null; // 0/nullは透過
-            const m = (v / 255) * 40;               // 8bit → 樹高[0–40m]
+            if (v === 0 || v === null) return null;   // 0/nullは透過
+            const m = (v / 255) * 40;                 // 8bit → 樹高[0–40m]
             for (let i=0; i<breaks.length-1; i++) {
               if (m >= breaks[i] && m < breaks[i+1]) return colors[i];
             }
@@ -88,6 +108,12 @@
 
         rasterLayer.addTo(map);
         map.fitBounds(rasterLayer.getBounds(), { padding:[10,10] });
+
+        // レイヤコントロールへ登録（重複登録を避ける）
+        if (overlayRef) layerControl.removeLayer(overlayRef);
+        layerControl.addOverlay(rasterLayer, '樹高');
+        overlayRef = rasterLayer;
+
       } catch (e) {
         console.error("読み込みエラー:", e);
         alert("TIFFの読み込みに失敗しました: " + (e.message || e));
@@ -97,7 +123,7 @@
       }
     }
 
-    // ====== 凡例（カテゴリ凡例：今の配色をそのまま表示） ======
+    // ====== 凡例（カテゴリ凡例） ======
     function addLegend() {
       const legend = L.control({position: "bottomright"});
       legend.onAdd = function () {
