@@ -3,104 +3,55 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>KAKEHASHI | Forestry Canopy Height Dashboard</title>
+  <title>Forestry TIFF Test</title>
 
   <!-- Leaflet -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
-  <!-- ===== GeoTIFF stack（順番が重要）===== -->
+  <!-- GeoTIFF stack -->
   <script src="https://unpkg.com/geotiff"></script>
   <script src="https://unpkg.com/proj4"></script>
   <script src="https://unpkg.com/georaster"></script>
   <script src="https://unpkg.com/georaster-layer-for-leaflet"></script>
 
-  <!-- Font -->
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
-
   <style>
-    :root {
-      --bg:#0b1020; --panel:#111827; --text:#e5e7eb; --muted:#9ca3af;
-      --accent:#22d3ee; --accent2:#a78bfa; --line:#243045;
-    }
-    * { box-sizing:border-box; }
-    html,body { height:100%; margin:0; background:var(--bg); color:var(--text); font-family:Inter,system-ui,sans-serif; }
-    .app { display:grid; grid-template-columns:350px 1fr; height:100%; }
-    .sidebar { background:var(--panel); padding:16px; overflow-y:auto; }
-    .sidebar h1 { font-size:18px; font-weight:600; margin:0 0 10px; }
-    .sidebar label { display:block; margin:10px 0 4px; font-size:14px; color:var(--muted); }
-    .sidebar input, .sidebar button { width:100%; padding:6px; border-radius:6px; border:none; margin-bottom:8px; }
-    .sidebar button { background:var(--accent); color:#000; font-weight:600; cursor:pointer; }
-    .sidebar button:hover { background:var(--accent2); }
-    #map { width:100%; height:100%; }
-    .legend { margin-top:12px; }
-    .legend-bar { height:12px; background:linear-gradient(to right,#00441b,#1a9850,#a6d96a,#ffffbf,#fdae61,#d73027); }
-    .legend-labels { display:flex; justify-content:space-between; font-size:12px; color:var(--muted); }
+    html, body, #map { height:100%; margin:0; }
   </style>
 </head>
 <body>
-  <div class="app">
-    <div class="sidebar">
-      <h1>森林の樹高ダッシュボード</h1>
-      <p>GEE出力の GeoTIFF (8bit) を読み込み、0–40 mで可視化します。</p>
-
-      <label for="filePath">TIFF ファイル</label>
-      <input id="filePath" type="text" value="data/onuma_canopy_height_8bit.tif" />
-      <button onclick="loadTiff()">読込</button>
-      <button onclick="focusOnOnuma()">大沼にフォーカス</button>
-
-      <div class="legend">
-        <div class="legend-bar"></div>
-        <div class="legend-labels"><span>0</span><span>20</span><span>40m</span></div>
-      </div>
-
-      <p style="font-size:12px;color:var(--muted);margin-top:10px;">
-        Tips: Apps Script が Drive の最新TIFFを
-        <code>data/onuma_canopy_height_8bit.tif</code> に自動コミットします。
-      </p>
-    </div>
-    <div id="map"></div>
-  </div>
+  <div id="map"></div>
 
   <script>
-    let map = L.map('map').setView([41.97, 140.67], 11);
+    const map = L.map('map').setView([41.97, 140.67], 11);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '© OpenStreetMap'
+      attribution: "© OpenStreetMap"
     }).addTo(map);
 
-    let rasterLayer;
+    const url = "data/onuma_canopy_height_8bit.tif";
 
-    async function loadTiff() {
-      const path = document.getElementById("filePath").value;
-      console.log("[load]", location.origin + "/" + path);
-
-      const response = await fetch(path);
-      const arrayBuffer = await response.arrayBuffer();
-      // 修正: georaster.parse を使用
-      const georaster = await georaster.parse(arrayBuffer);
-
-      if (rasterLayer) map.removeLayer(rasterLayer);
-
-      rasterLayer = new GeoRasterLayer({
-        georaster,
-        opacity: 0.7,
-        pixelValuesToColorFn: values => {
-          const v = values[0];
-          if (v === 0 || v === null) return null;
-          const m = (v / 255) * 40; // 0–255 → 0–40m
-          return m < 10 ? "#00441b" :
-                 m < 20 ? "#1a9850" :
-                 m < 30 ? "#a6d96a" :
-                 m < 35 ? "#ffffbf" :
-                 m < 38 ? "#fdae61" : "#d73027";
-        }
-      });
-      rasterLayer.addTo(map);
-    }
-
-    function focusOnOnuma() {
-      map.setView([41.97, 140.67], 13);
-    }
+    fetch(url)
+      .then(res => res.arrayBuffer())
+      .then(arrayBuffer => parseGeoraster(arrayBuffer))  // ✅ parseGeoraster を直接呼ぶ
+      .then(georaster => {
+        const layer = new GeoRasterLayer({
+          georaster,
+          opacity: 0.7,
+          pixelValuesToColorFn: values => {
+            const v = values[0];
+            if (v === 0 || v === null) return null;
+            const m = (v / 255) * 40;
+            return m < 10 ? "#00441b" :
+                   m < 20 ? "#1a9850" :
+                   m < 30 ? "#a6d96a" :
+                   m < 35 ? "#ffffbf" :
+                   m < 38 ? "#fdae61" : "#d73027";
+          }
+        });
+        layer.addTo(map);
+        map.fitBounds(layer.getBounds());
+      })
+      .catch(err => console.error("読み込みエラー:", err));
   </script>
 </body>
 </html>
