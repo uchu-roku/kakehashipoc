@@ -15,7 +15,7 @@
   <script src="https://unpkg.com/georaster"></script>
   <script src="https://unpkg.com/georaster-layer-for-leaflet"></script>
 
-  <!-- ✅ d3本体（含むscale, interpolate, すべて） -->
+  <!-- d3 (full版) -->
   <script src="https://d3js.org/d3.v7.min.js"></script>
 
   <style>
@@ -45,12 +45,12 @@
       attribution: "© OpenStreetMap"
     }).addTo(map);
 
+    // ===== 読み込み対象GeoTIFF（将来はここを切り替え） =====
     const url = "data/onuma_canopy_height_8bit.tif";
 
-    // グラデーションスケール（0～40mを想定）
-    const colorScale = d3.scaleSequential()
-      .domain([0, 40])
-      .interpolator(d3.interpolateYlGnBu);  // ✅ interpolate関数を利用
+    // ===== カテゴリ凡例用の階級 =====
+    const breaks = [0, 10, 20, 30, 40];
+    const colors = ["#ffffcc", "#a1dab4", "#41b6c4", "#225ea8"];
 
     let rasterLayer;
 
@@ -64,8 +64,11 @@
           pixelValuesToColorFn: values => {
             const v = values[0];
             if (v === 0 || v === null) return null;
-            const m = (v / 255) * 40; // 0–40m に正規化
-            return colorScale(m);    // ✅ ここがエラー原因 → 修正済み
+            const m = (v / 255) * 40; // 樹高換算
+            for (let i=0; i<breaks.length-1; i++) {
+              if (m >= breaks[i] && m < breaks[i+1]) return colors[i];
+            }
+            return colors[colors.length-1];
           }
         });
         rasterLayer.addTo(map);
@@ -76,25 +79,21 @@
       })
       .catch(err => console.error("読み込みエラー:", err));
 
-    // 凡例追加
+    // ===== 凡例（離散区分） =====
     function addLegend() {
       const legend = L.control({position: "bottomright"});
       legend.onAdd = function () {
         const div = L.DomUtil.create("div", "legend");
-        const grades = [0, 10, 20, 30, 40];
-        grades.forEach((g, i) => {
-          const next = grades[i+1];
-          if (next !== undefined) {
-            const c = colorScale((g+next)/2);
-            div.innerHTML += `<div><span style="background:${c}"></span>${g}–${next}m</div>`;
-          }
-        });
+        for (let i=0; i<breaks.length-1; i++) {
+          div.innerHTML +=
+            `<div><span style="background:${colors[i]}"></span>${breaks[i]}–${breaks[i+1]}m</div>`;
+        }
         return div;
       };
       legend.addTo(map);
     }
 
-    // UI操作（透過度スライダー、表示切替）
+    // ===== UI操作（透過度＋表示切替） =====
     function addControls() {
       const control = L.control({position: "topright"});
       control.onAdd = function() {
