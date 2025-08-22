@@ -9,112 +9,128 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
-  <!-- GeoTIFF stack -->
+  <!-- GeoTIFF stack（現行で成功した並び・実装を維持） -->
   <script src="https://unpkg.com/geotiff"></script>
   <script src="https://unpkg.com/proj4"></script>
   <script src="https://unpkg.com/georaster"></script>
   <script src="https://unpkg.com/georaster-layer-for-leaflet"></script>
 
-  <!-- d3 (full版) -->
+  <!-- d3（凡例や将来の連続カラーマップ用。軽量で衝突しません） -->
   <script src="https://d3js.org/d3.v7.min.js"></script>
 
   <style>
     html, body, #map { height:100%; margin:0; }
-    .legend {
-      background: white;
-      padding: 6px;
-      font-size: 12px;
-      line-height: 1.2em;
-    }
-    .legend div { display:flex; align-items:center; }
-    .legend span {
-      width:20px; height:12px; margin-right:6px; display:inline-block;
-    }
     .leaflet-control.custom {
-      background: white;
-      padding: 8px;
+      background:#fff; padding:8px; border-radius:6px;
+      box-shadow:0 2px 6px rgba(0,0,0,.2); font:14px/1.2 system-ui, sans-serif;
     }
+    .legend { background:#fff; padding:6px; border-radius:6px; font:12px/1.2 system-ui, sans-serif; }
+    .legend div { display:flex; align-items:center; }
+    .legend span { width:20px; height:12px; margin-right:6px; display:inline-block; }
   </style>
 </head>
 <body>
   <div id="map"></div>
 
   <script>
+    // ---------------- 基本セットアップ（現行の成功形を維持） ----------------
     const map = L.map('map').setView([41.97, 140.67], 11);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       attribution: "© OpenStreetMap"
     }).addTo(map);
 
-    // ===== 読み込み対象GeoTIFF（将来はここを切り替え） =====
-    const url = "data/onuma_canopy_height_8bit.tif";
+    // ---------------- 追加：レイヤ一覧（ここに時系列などを足すだけ） ----------------
+    const LAYERS = {
+      "樹高 2024-08": "data/onuma_canopy_height_8bit.tif",
+      // 例: 別のGeoTIFFを置いたら下記を1行追加するだけ
+      // "樹高 2024-07": "data/onuma_canopy_height_8bit_202407.tif",
+      // "樹高 2024-06": "data/onuma_canopy_height_8bit_202406.tif",
+    };
 
-    // ===== カテゴリ凡例用の階級 =====
+    // ---------------- 表示スタイル（カテゴリ凡例：0–10 / 10–20 / 20–30 / 30–40 m） ----------------
     const breaks = [0, 10, 20, 30, 40];
     const colors = ["#ffffcc", "#a1dab4", "#41b6c4", "#225ea8"];
 
-    let rasterLayer;
+    let rasterLayer = null; // 現在表示中のGeoRasterLayer
 
-    fetch(url)
-      .then(res => res.arrayBuffer())
-      .then(arrayBuffer => parseGeoraster(arrayBuffer))
-      .then(georaster => {
+    // ---------------- 読み込み（現行の fetch→parseGeoraster 流れを関数化） ----------------
+    async function loadRaster(url) {
+      try {
+        const res = await fetch(url);
+        const buf = await res.arrayBuffer();
+        const georaster = await parseGeoraster(buf); // ← 現行どおり
+
+        // 以前のレイヤがあれば外す
+        if (rasterLayer && map.hasLayer(rasterLayer)) map.removeLayer(rasterLayer);
+
         rasterLayer = new GeoRasterLayer({
           georaster,
-          opacity: 0.7,
+          // 既にスライダーで変更していたら値を引き継ぐ／なければ 0.7
+          opacity: rasterLayer ? rasterLayer.options.opacity : 0.7,
           pixelValuesToColorFn: values => {
             const v = values[0];
-            if (v === 0 || v === null) return null;
-            const m = (v / 255) * 40; // 樹高換算
-            for (let i=0; i<breaks.length-1; i++) {
+            if (v === 0 || v === null) return null;        // 0やnullは透過
+            const m = (v / 255) * 40;                       // 8bit → 樹高[0–40m]
+            for (let i=0; i<breaks.length-1; i++) {         // カテゴリ配色
               if (m >= breaks[i] && m < breaks[i+1]) return colors[i];
             }
-            return colors[colors.length-1];
+            return colors[colors.length-1];                 // 上限超えは最後の色
           }
         });
+
         rasterLayer.addTo(map);
-        map.fitBounds(rasterLayer.getBounds());
+        map.fitBounds(rasterLayer.getBounds(), {padding:[10,10]});
+      } catch (e) {
+        console.error("読み込みエラー:", e);
+        alert("TIFFの読み込みに失敗しました: " + (e.message || e));
+      }
+    }
 
-        addLegend();
-        addControls();
-      })
-      .catch(err => console.error("読み込みエラー:", err));
-
-    // ===== 凡例（離散区分） =====
+    // ---------------- 凡例（カテゴリ凡例） ----------------
     function addLegend() {
       const legend = L.control({position: "bottomright"});
       legend.onAdd = function () {
         const div = L.DomUtil.create("div", "legend");
         for (let i=0; i<breaks.length-1; i++) {
-          div.innerHTML +=
-            `<div><span style="background:${colors[i]}"></span>${breaks[i]}–${breaks[i+1]}m</div>`;
+          div.innerHTML += `<div><span style="background:${colors[i]}"></span>${breaks[i]}–${breaks[i+1]}m</div>`;
         }
         return div;
       };
       legend.addTo(map);
     }
 
-    // ===== UI操作（透過度＋表示切替） =====
+    // ---------------- UI（レイヤ選択＋透過度スライダー＋表示/非表示） ----------------
     function addControls() {
       const control = L.control({position: "topright"});
       control.onAdd = function() {
         const div = L.DomUtil.create("div", "leaflet-control custom");
 
-        // スライダー
+        // ▼レイヤ選択（ドロップダウン）
+        const select = document.createElement("select");
+        for (const label in LAYERS) {
+          const opt = document.createElement("option");
+          opt.value = LAYERS[label];
+          opt.textContent = label;
+          select.appendChild(opt);
+        }
+        select.onchange = e => loadRaster(e.target.value);
+        div.appendChild(select);
+
+        // ▼透過度スライダー
         const slider = document.createElement("input");
         slider.type = "range"; slider.min = 0; slider.max = 1; slider.step = 0.1; slider.value = 0.7;
-        slider.oninput = e => { rasterLayer.setOpacity(e.target.value); };
+        slider.style.marginLeft = "8px";
+        slider.oninput = e => { if (rasterLayer) rasterLayer.setOpacity(parseFloat(e.target.value)); };
         div.appendChild(slider);
 
-        // 表示切替
+        // ▼表示/非表示ボタン
         const btn = document.createElement("button");
         btn.innerText = "表示/非表示";
-        btn.style.marginLeft = "6px";
+        btn.style.marginLeft = "8px";
         btn.onclick = () => {
-          if (map.hasLayer(rasterLayer)) {
-            map.removeLayer(rasterLayer);
-          } else {
-            rasterLayer.addTo(map);
-          }
+          if (!rasterLayer) return;
+          if (map.hasLayer(rasterLayer)) map.removeLayer(rasterLayer);
+          else rasterLayer.addTo(map);
         };
         div.appendChild(btn);
 
@@ -122,6 +138,11 @@
       };
       control.addTo(map);
     }
+
+    // ---------------- 起動（既定レイヤを読み込み・UI/凡例を追加） ----------------
+    addLegend();
+    addControls();
+    loadRaster(LAYERS["樹高 2024-08"]); // 既定を表示
   </script>
 </body>
 </html>
