@@ -15,8 +15,25 @@
   <script src="https://unpkg.com/georaster"></script>
   <script src="https://unpkg.com/georaster-layer-for-leaflet"></script>
 
+  <!-- d3-scale for gradient color mapping -->
+  <script src="https://d3js.org/d3-scale.v3.min.js"></script>
+
   <style>
     html, body, #map { height:100%; margin:0; }
+    .legend {
+      background: white;
+      padding: 6px;
+      font-size: 12px;
+      line-height: 1.2em;
+    }
+    .legend div { display:flex; align-items:center; }
+    .legend span {
+      width:20px; height:12px; margin-right:6px; display:inline-block;
+    }
+    .leaflet-control.custom {
+      background: white;
+      padding: 8px;
+    }
   </style>
 </head>
 <body>
@@ -30,29 +47,82 @@
 
     const url = "data/onuma_canopy_height_8bit.tif";
 
+    // グラデーションスケール（0～40mを想定）
+    const colorScale = d3.scaleSequential()
+      .domain([0, 40])
+      .interpolator(d3.interpolateYlGnBu);
+
+    let rasterLayer;
+
     fetch(url)
       .then(res => res.arrayBuffer())
-      .then(arrayBuffer => parseGeoraster(arrayBuffer))  // ✅ parseGeoraster を直接呼ぶ
+      .then(arrayBuffer => parseGeoraster(arrayBuffer))
       .then(georaster => {
-        const layer = new GeoRasterLayer({
+        rasterLayer = new GeoRasterLayer({
           georaster,
           opacity: 0.7,
           pixelValuesToColorFn: values => {
             const v = values[0];
             if (v === 0 || v === null) return null;
-            const m = (v / 255) * 40;
-            return m < 10 ? "#00441b" :
-                   m < 20 ? "#1a9850" :
-                   m < 30 ? "#a6d96a" :
-                   m < 35 ? "#ffffbf" :
-                   m < 38 ? "#fdae61" : "#d73027";
+            const m = (v / 255) * 40; // 0–40m に正規化
+            return colorScale(m);
           }
         });
-        layer.addTo(map);
-        map.fitBounds(layer.getBounds());
+        rasterLayer.addTo(map);
+        map.fitBounds(rasterLayer.getBounds());
+
+        addLegend();
+        addControls();
       })
       .catch(err => console.error("読み込みエラー:", err));
+
+    // 凡例追加
+    function addLegend() {
+      const legend = L.control({position: "bottomright"});
+      legend.onAdd = function () {
+        const div = L.DomUtil.create("div", "legend");
+        const grades = [0, 10, 20, 30, 40];
+        grades.forEach((g, i) => {
+          const next = grades[i+1];
+          if (next !== undefined) {
+            const c = colorScale((g+next)/2);
+            div.innerHTML += `<div><span style="background:${c}"></span>${g}–${next}m</div>`;
+          }
+        });
+        return div;
+      };
+      legend.addTo(map);
+    }
+
+    // UI操作（透過度スライダー、表示切替）
+    function addControls() {
+      const control = L.control({position: "topright"});
+      control.onAdd = function() {
+        const div = L.DomUtil.create("div", "leaflet-control custom");
+
+        // スライダー
+        const slider = document.createElement("input");
+        slider.type = "range"; slider.min = 0; slider.max = 1; slider.step = 0.1; slider.value = 0.7;
+        slider.oninput = e => { rasterLayer.setOpacity(e.target.value); };
+        div.appendChild(slider);
+
+        // 表示切替
+        const btn = document.createElement("button");
+        btn.innerText = "表示/非表示";
+        btn.style.marginLeft = "6px";
+        btn.onclick = () => {
+          if (map.hasLayer(rasterLayer)) {
+            map.removeLayer(rasterLayer);
+          } else {
+            rasterLayer.addTo(map);
+          }
+        };
+        div.appendChild(btn);
+
+        return div;
+      };
+      control.addTo(map);
+    }
   </script>
 </body>
 </html>
-
