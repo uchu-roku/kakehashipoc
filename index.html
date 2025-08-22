@@ -9,114 +9,48 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
-  <!-- d3.js for color scale -->
-  <script src="https://d3js.org/d3.v7.min.js"></script>
-
-  <!-- geotiff + georaster -->
+  <!-- 必須ライブラリ（前の成功バージョンと同じ順番で） -->
   <script src="https://unpkg.com/geotiff@2.1.3/dist-browser/geotiff.min.js"></script>
+  <script src="https://unpkg.com/proj4@2.9.2/dist/proj4.js"></script>
   <script src="https://unpkg.com/georaster/dist/georaster.browser.min.js"></script>
   <script src="https://unpkg.com/georaster-layer-for-leaflet"></script>
 
   <style>
     html, body, #map { height:100%; margin:0; }
-    .control-panel {
-      position:absolute; top:10px; right:10px; z-index:1000;
-      background:#fff; padding:10px; border-radius:6px; box-shadow:0 2px 6px rgba(0,0,0,0.2);
-      font-family:sans-serif; font-size:14px;
-    }
-    .legend {
-      background:white; padding:6px; line-height:1.2em;
-      border:1px solid #ccc; border-radius:4px;
-    }
-    .legend i {
-      width:18px; height:18px; float:left; margin-right:6px; opacity:0.8;
-    }
   </style>
 </head>
 <body>
   <div id="map"></div>
 
-  <div class="control-panel">
-    <div>
-      <label>透過度:</label>
-      <input type="range" id="opacitySlider" min="0" max="1" step="0.1" value="0.8">
-    </div>
-    <button id="toggleLayer">表示/非表示</button>
-  </div>
-
   <script>
-    const map = L.map("map").setView([42.0, 140.7], 11);
+    const map = L.map("map").setView([41.99, 140.67], 11);
     L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
       attribution: "© OpenStreetMap"
     }).addTo(map);
 
-    // TIFF URL（既存 GitHub のものを利用）
-    const url1 = "https://uchu-roku.github.io/kakehashipoc/data/onuma_canopy_height_8bit.tif";
-    const url2 = "https://uchu-roku.github.io/kakehashipoc/data/onuma_canopy_height_alt.tif"; // 比較用
+    const url = "https://uchu-roku.github.io/kakehashipoc/data/onuma_canopy_height_8bit.tif";
 
-    let geotiffLayer1, geotiffLayer2;
-
-    async function addRaster(url, name) {
+    (async () => {
       const response = await fetch(url);
       const arrayBuffer = await response.arrayBuffer();
       const georaster = await parseGeoraster(arrayBuffer);
 
-      const min = georaster.mins[0];
-      const max = georaster.maxs[0];
-      console.log(`[${name}] range:`, min, max);
-
-      const colorScale = d3.scaleSequential(d3.interpolateYlGn).domain([min, max]);
+      console.log("GeoTIFF loaded:", georaster);
 
       const layer = new GeoRasterLayer({
         georaster,
         opacity: 0.8,
-        pixelValuesToColorFn: val => val === null ? null : colorScale(val),
-      });
-
-      return layer;
-    }
-
-    (async () => {
-      geotiffLayer1 = await addRaster(url1, "Layer1");
-      geotiffLayer2 = await addRaster(url2, "Layer2");
-
-      geotiffLayer1.addTo(map);
-
-      // Layer control
-      const overlayMaps = {
-        "シナリオ1": geotiffLayer1,
-        "シナリオ2": geotiffLayer2
-      };
-      L.control.layers(null, overlayMaps).addTo(map);
-
-      // 凡例追加
-      const legend = L.control({position:"bottomright"});
-      legend.onAdd = function () {
-        const div = L.DomUtil.create("div", "legend");
-        const grades = [0, 10, 20, 30];
-        const labels = ["<10m", "10-20m", "20-30m", "30m以上"];
-        for (let i=0; i<grades.length; i++) {
-          const color = d3.interpolateYlGn((i+1)/grades.length);
-          div.innerHTML += `<i style="background:${color}"></i>${labels[i]}<br>`;
-        }
-        return div;
-      };
-      legend.addTo(map);
-
-      // UI操作
-      document.getElementById("opacitySlider").addEventListener("input", e => {
-        const v = parseFloat(e.target.value);
-        geotiffLayer1.setOpacity(v);
-        geotiffLayer2.setOpacity(v);
-      });
-
-      document.getElementById("toggleLayer").addEventListener("click", () => {
-        if (map.hasLayer(geotiffLayer1)) {
-          map.removeLayer(geotiffLayer1);
-        } else {
-          map.addLayer(geotiffLayer1);
+        pixelValuesToColorFn: val => {
+          if (val === null) return null;
+          return val > 30 ? "#ff0000" :
+                 val > 20 ? "#a6d96a" :
+                 val > 10 ? "#1a9641" :
+                            "#006837";
         }
       });
+
+      layer.addTo(map);
+      map.fitBounds(layer.getBounds());
     })();
   </script>
 </body>
